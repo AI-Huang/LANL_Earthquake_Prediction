@@ -1,0 +1,8 @@
+psutil
+matplotlib
+tqdm
+numpy
+scipy
+tensorflow>=2.1.0
+seaborn
+sklearn
