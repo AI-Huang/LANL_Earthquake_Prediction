@@ -10,15 +10,14 @@ Typical usage:
 Environments:
     tensorflow>=2.1.0
 """
+import imp
 import os
 import argparse
 from datetime import datetime
 import tensorflow as tf
-# from wavenet.keras_fn.wavenet import
-from wavenet.keras_fn.wavenet_lstm import WaveNet_LSTM
-from datasets.iaqi_data import load_data
-from utils.dir_utils import makedir_exist_ok
-from utils.gpu_utils import get_gpu_memory, get_available_gpu_indices
+from model.wavenet_lstm import WaveNet_LSTM
+from datasets.load_data import load_data
+from datasets.window_sequences import WindowSequences
 
 
 def lr_schedule(epoch):
@@ -27,7 +26,8 @@ def lr_schedule(epoch):
         lr *= 0.1  # # reduced by 0.1 when finish training for 40 epochs
     return lr
 
-def lr_schedule(epoch):
+
+def lr_schedule_v2(epoch):
     LR = 0.001
     if epoch < 40:
         lr = LR
@@ -44,7 +44,8 @@ def lr_schedule(epoch):
     else:
         lr = LR / 50
     return lr
-    
+
+
 def training_args():
     """parse arguments
     """
@@ -74,8 +75,6 @@ def training_args():
                         action='store', default=0, help='sensor_index, e.g., --sensor_index=0, index of the sensor, 0, 1, 2, 3.')
     parser.add_argument('--all_channels', type=string2bool, dest='all_channels',
                         action='store', default=False, help='all_channels, e.g., --all_channels=False, if True, will train on data from all channels.')
-    parser.add_argument('--data_name', type=str, dest='data_name',
-                        action='store', default=None, help='data_name, e.g., --data_name=pm25_0, data name from the sensor.')
 
     parser.add_argument('--window_size', type=int, dest='window_size',
                         action='store', default=7200, help='window_size, e.g., --window_size=7200, window size of the input data.')
@@ -119,29 +118,25 @@ def training_args():
 
     args = parser.parse_args()
 
-    # if data_name is not set
-    if not args.data_name:
-        args.data_name = "_".join([args.data_type, str(args.sensor_index)])
-    pm25_data_list = ["pm25_0", "pm25_1", "pm25_2", "pm25_3", "pm25_all"]
-    if not args.data_name in pm25_data_list:
-        raise ValueError(f"{args.data_name} NOT in pm25_data_list!")
-
     return args
 
 
 def main():
     args = training_args()
-    data_name = args.data_name
     window_size = args.window_size
     stride = args.stride
     batch_size = args.batch_size
     validation_split = args.validation_split
 
-    gpus_memory = get_gpu_memory()
-    available_gpu_indices = get_available_gpu_indices(
-        gpus_memory, required_memory=5000)  # 5000 MB
-    model_gpu = available_gpu_indices[0]
-    train_gpu = available_gpu_indices[1]
+    # gpus_memory = get_gpu_memory()
+    # available_gpu_indices = get_available_gpu_indices(
+    # gpus_memory, required_memory=5000)  # 5000 MB
+    # model_gpu = available_gpu_indices[0]
+    # train_gpu = available_gpu_indices[1]
+
+    model_gpu = 0
+    train_gpu = 0
+
     model_device = "/device:GPU:" + str(model_gpu)
     train_device = "/device:GPU:" + str(train_gpu)
 
@@ -150,22 +145,28 @@ def main():
     #     train_device = "/device:CPU:0"
 
     # Load data
-    window_sequence_train, window_sequence_val = load_data(
-        data_name, window_size, stride, batch_size, validation_split, shuffle=True, seed=42, standard="USA"
-    )
+    BASE_PATH = "E:\\DeepLearningData\\LANL-Earthquake-Prediction"
+
+    train_acoustic_data = load_data(path=BASE_PATH, name="train_acoustic_data")
+
+    train_time_to_failure = load_data(
+        path=BASE_PATH, name="train_time_to_failure")
+
+    window_sequence_train = WindowSequences(
+        train_acoustic_data, train_time_to_failure, window_size=window_size, stride=stride, batch_size=batch_size, shuffle=True, seed=42, validation_split=validation_split, subset="training")
 
     # Config paths
     prefix = os.path.join(
         "~", "Documents", "DeepLearningData", "AirMonitor")
     date_time = datetime.now().strftime("%Y%m%d-%H%M%S")
-    subfix = os.path.join(args.model_type, data_name,
+    subfix = os.path.join(args.model_type,
                           "_".join(["stride", str(stride)]), date_time)  # date_time at last
 
     # ckpts 和 logs 分开
-    log_dir = os.path.expanduser(os.path.join(prefix, "logs", subfix, ))
+    log_dir = os.path.expanduser(os.path.join(prefix, "logs", subfix))
     ckpt_dir = os.path.expanduser(os.path.join(prefix, "ckpts", subfix))
-    makedir_exist_ok(log_dir)
-    makedir_exist_ok(ckpt_dir)
+    os.makedirs(log_dir)
+    os.makedirs(ckpt_dir)
 
     # Define callbacks
     from tensorflow.keras.callbacks import LearningRateScheduler, ModelCheckpoint, CSVLogger, TensorBoard
@@ -198,6 +199,7 @@ def main():
         if args.model_type == "WaveNet_LSTM":
             model = WaveNet_LSTM(input_shape=(
                 args.window_size, 1), activation=args.activation)
+
         model.compile(
             Adam(clipvalue=1.0, lr=lr_schedule(0)),
             loss=loss,
@@ -207,7 +209,7 @@ def main():
     with tf.device(train_device):
         model.fit(
             x=window_sequence_train,
-            validation_data=window_sequence_val,
+            # validation_data=window_sequence_val,
             epochs=args.epochs,
             callbacks=callbacks,
             verbose=1

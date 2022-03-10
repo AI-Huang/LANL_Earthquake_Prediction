@@ -13,7 +13,10 @@ from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Activation, LSTM, Conv1D, Multiply, Add, AveragePooling1D, Bidirectional, Dropout, Dense, Attention, BatchNormalization
 from tensorflow.keras.regularizers import l2
 from tensorflow.keras.optimizers import Adam, SGD
-from model.attention_layers import MyAttention, BahdanauAttention
+try:
+    from model.attention_layers import MyAttention, BahdanauAttention
+except:
+    from attention_layers import MyAttention, BahdanauAttention
 
 
 def wave_block(x, filters, kernel_size, n, batch_norm=False):
@@ -52,43 +55,7 @@ def wave_block(x, filters, kernel_size, n, batch_norm=False):
     return x  # Not residual_x!
 
 
-def wave_block_ver2020(x, filters, kernel_size, n, batch_norm=False):
-    """WaveNet Residual Conv1D block
-    Inputs:
-        x:
-        filters:
-        kernel_size:
-        n:
-        batch_norm:
-    Return:
-    """
-    # Dilated Conv
-    dilation_rates = [2**i for i in range(n)]
-    for dilation_rate in dilation_rates:
-        residual_x = x
-        tanh_out = Conv1D(filters=filters,
-                          kernel_size=kernel_size,
-                          padding='same',
-                          activation='tanh',
-                          dilation_rate=dilation_rate,
-                          kernel_regularizer=l2(1e-4))(x)
-        sigm_out = Conv1D(filters=filters,
-                          kernel_size=kernel_size,
-                          padding='same',
-                          activation='sigmoid',
-                          dilation_rate=dilation_rate,
-                          kernel_regularizer=l2(1e-4))(x)
-        x = Multiply()([tanh_out, sigm_out])
-        x = Conv1D(1, 1)(x)  # Skip connections
-        if batch_norm:
-            x = BatchNormalization(beta_regularizer=l2(
-                1e-4), gamma_regularizer=l2(1e-4))(x)
-        x = Add()([residual_x, x])
-
-    return x  # Not residual_x!
-
-
-def WaveNet_LSTM(input_shape, activation=None, batch_norm=False, attention_type="MyAttention"):
+def WaveNet_LSTM(input_shape, activation=None, batch_norm=False, attention_type="official"):
     """WaveNet_LSTM
     Inputs
         input_shape: the input must be a vector, so *input_shape* must be (dim, 1).
@@ -107,8 +74,8 @@ def WaveNet_LSTM(input_shape, activation=None, batch_norm=False, attention_type=
                padding='same',
                kernel_regularizer=l2(1e-4))(input_)
 
-    x = wave_block_ver2020(x, base_filters, kernel_size,
-                           wavenet_layers[0], batch_norm=batch_norm)
+    x = wave_block(x, base_filters, kernel_size,
+                   wavenet_layers[0], batch_norm=batch_norm)
     if activation:
         x = Activation(activation)(x)
     x = AveragePooling1D(10)(x)
@@ -116,8 +83,8 @@ def WaveNet_LSTM(input_shape, activation=None, batch_norm=False, attention_type=
         x = BatchNormalization(beta_regularizer=l2(
             1e-4), gamma_regularizer=l2(1e-4))(x)
 
-    x = wave_block_ver2020(x, base_filters, kernel_size,
-                           wavenet_layers[1], batch_norm=batch_norm)  # *2
+    x = wave_block(x, base_filters, kernel_size,
+                   wavenet_layers[1], batch_norm=batch_norm)  # *2
     if activation:
         x = Activation(activation)(x)
     x = AveragePooling1D(10)(x)
@@ -125,8 +92,8 @@ def WaveNet_LSTM(input_shape, activation=None, batch_norm=False, attention_type=
         x = BatchNormalization(beta_regularizer=l2(
             1e-4), gamma_regularizer=l2(1e-4))(x)
 
-    x = wave_block_ver2020(x, base_filters, kernel_size,
-                           wavenet_layers[2], batch_norm=batch_norm)  # *4
+    x = wave_block(x, base_filters, kernel_size,
+                   wavenet_layers[2], batch_norm=batch_norm)  # *4
     if activation:
         x = Activation(activation)(x)
     x = AveragePooling1D(10)(x)
@@ -138,11 +105,11 @@ def WaveNet_LSTM(input_shape, activation=None, batch_norm=False, attention_type=
 
     valid_attention = ["official", "MyAttention", "BahdanauAttention"]
     assert attention_type in valid_attention
-    if attention_type == valid_attention[0]:
+    if attention_type == "official":
         x = Attention()([x, x])
-    elif attention_type == valid_attention[1]:
+    elif attention_type == "MyAttention":
         x = MyAttention(input_shape[0]//1000)(x)
-    elif attention_type == valid_attention[2]:
+    elif attention_type == "BahdanauAttention":
         x = BahdanauAttention(input_shape[0]//1000)(x)
 
     x = Dropout(0.2)(x)
@@ -156,10 +123,17 @@ def WaveNet_LSTM(input_shape, activation=None, batch_norm=False, attention_type=
 def main():
     from tensorflow.keras.utils import plot_model
 
-    test_attention_type = "BahdanauAttention"
+    test_attention_type = "official"
+    # test_attention_type = "BahdanauAttention"
+    # test_attention_type == "MyAttention"
     model = WaveNet_LSTM(input_shape=(7200, 1),
-                         activation=None, attention_type=test_attention_type)
-    plot_model(model, to_file=f"./png/WaveNet_LSTM-46.png", show_shapes=True)
+                         activation=None,
+                         batch_norm=None,
+                         attention_type=test_attention_type)
+
+    model.summary()
+
+    plot_model(model, to_file=f"./WaveNet_LSTM-test.png", show_shapes=True)
 
 
 if __name__ == "__main__":
